@@ -42,6 +42,20 @@ def process_file(file_path):
     
     return strings_array
 
+def split_text_on_line_boundary(text, midpoint):
+    # 向前查找换行符
+    split_point = text.rfind('\n', 0, midpoint)
+    if split_point == -1:  # 如果未找到换行符
+        # 向后查找换行符
+        split_point = text.find('\n', midpoint)
+        if split_point == -1:  # 如果仍未找到换行符
+            split_point = midpoint  # 直接使用原始midpoint
+
+    # 根据找到的分割点拆分文本，并保留换行符
+    part1 = text[:split_point + 1]  # 包含换行符
+    part2 = text[split_point + 1:]  # 从换行符之后开始
+    return part1, part2
+
 def initialize_edge(disable_user_profile, playwright_headless):
     # 结束现有edge进程
     print("正在尝试结束现有edge实例...")
@@ -155,13 +169,13 @@ def translate_text(page, text, source_lang, target_lang, force_lang_select):
         original_lines = len([line for line in text.split('\n') if line.strip()])
         retry_count = 0 
         while True:
-            time.sleep(2)  # 每秒检查一次
+            time.sleep(2)  # 每2秒检查一次
             translated_text = output_element.inner_text()
             translated_lines = [line for line in translated_text.splitlines() if line.strip()]
             #print(f"原译文{translated_text}")
             print(f"已翻译{len(translated_lines)}/{original_lines}行")
             if len(translated_lines) == original_lines:
-                if not (translated_lines[-1] == '[...]' and translated_lines[-2] == '[...]'):
+                if not (translated_lines[-1] == '[...] 'and translated_lines[-2] == '[...] '):
                     # 创建一个新列表用于合并翻译结果和原始输入的空行
                     processed_result = []
                     translated_index = 0  # 用于跟踪翻译文本的索引
@@ -178,24 +192,38 @@ def translate_text(page, text, source_lang, target_lang, force_lang_select):
                     return translated_text
             retry_count += 1
             if retry_count >= 4:
-                print("翻译行数不匹配，刷新网页重试")
-                page.reload()  # 刷新网页
-                retry_count = 0  # 重置重试计数器
-                
-                # 重新定位输入框元素
-                input_element = page.query_selector('div[contenteditable="true"][role="textbox"][aria-multiline="true"]')
-                if input_element:
-                    input_element.fill('')  # 清空输入框
-                    input_element.fill(text)
+                # 检查是否存在字符限制提示
+                char_limit_element = page.query_selector('div[data-testid="translator-character-limit-proad"]')
+                if char_limit_element:
+                    print("检测到字符限制，正在拆分输入文本...")
+                    # 拆分文本并分别翻译
+                    part1, part2 = split_text_on_line_boundary(text, len(text) // 2)
+                    translated_part1 = translate_text(page, part1, source_lang, target_lang, force_lang_select)
+                    translated_part2 = translate_text(page, part2, source_lang, target_lang, force_lang_select)
+
+                    if translated_part1 is not None and translated_part2 is not None:
+                        # 合并翻译结果
+                        return translated_part1.strip() + "\n" + translated_part2.strip() + "\n"
+                    else:
+                        print("部分翻译失败，无法合并结果")
+                        return None
                 else:
-                    print("输入框元素未找到")
-                    return None
-                
-                # 重新定位输出框元素
-                output_element = page.wait_for_selector('section[aria-labelledby="translation-target-heading"] div[contenteditable="true"][role="textbox"][aria-multiline="true"]')
-                if not output_element:
-                    print("翻译结果元素未找到")
-                    return None
+                    print("翻译行数不匹配，刷新网页重试")
+                    page.reload()  # 刷新网页
+                    retry_count = 0  # 重置重试计数器
+
+                    input_element = page.query_selector('div[contenteditable="true"][role="textbox"][aria-multiline="true"]')
+                    if input_element:
+                        input_element.fill('')  # 清空输入框
+                        input_element.fill(text)
+                    else:
+                        print("输入框元素未找到")
+                        return None
+
+                    output_element = page.wait_for_selector('section[aria-labelledby="translation-target-heading"] div[contenteditable="true"][role="textbox"][aria-multiline="true"]')
+                    if not output_element:
+                        print("翻译结果元素未找到")
+                        return None
     else:
         print("翻译结果元素未找到")
         return None
